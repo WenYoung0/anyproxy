@@ -5,12 +5,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
+	urlpkg "net/url"
 	"time"
 
-	urlpkg "net/url"
-
-	"github.com/wenyoung0/anyproxy/common"
+	"github.com/wenyoung0/anyproxy/constant"
 )
 
 var _ Downloader = (*HTTPDownloader)(nil)
@@ -26,16 +24,14 @@ var defaultHTTPClient = &http.Client{
 }
 
 type HTTPDownloaderOption struct {
-	Client        *http.Client
-	Filter        func(ctx context.Context, url *urlpkg.URL) bool
-	RequestFilter func(req *http.Request) error
+	Client    *http.Client
+	URLFilter func(ctx context.Context, url *urlpkg.URL) bool
 }
 
 type HTTPDownloader struct {
 	client *http.Client
 
 	urlFilter func(ctx context.Context, url *urlpkg.URL) bool
-	reqFilter func(req *http.Request) error
 }
 
 func NewHTTP(option *HTTPDownloaderOption) *HTTPDownloader {
@@ -49,20 +45,29 @@ func NewHTTP(option *HTTPDownloaderOption) *HTTPDownloader {
 	} else {
 		client = option.Client
 	}
-	
+
 	return &HTTPDownloader{
 		client:    client,
-		urlFilter: option.Filter,
-		reqFilter: option.RequestFilter,
+		urlFilter: option.URLFilter,
 	}
 }
 
 func (d *HTTPDownloader) Download(ctx context.Context, address string) (io.ReadCloser, error) {
-	url, err := urlpkg.Parse(address)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, address, nil)
 	if err != nil {
-		return nil, fmt.Errorf("invalid url: %w", err)
+		return nil, err
 	}
-	if d.urlFilter != nil && !d.urlFilter(ctx, url) {
+
+	response, err := d.DownloadHTTP(req)
+	if err != nil {
+		return nil, err
+	}
+	return response.Body, nil
+}
+
+func (d *HTTPDownloader) DownloadHTTP(request *http.Request) (*http.Response, error) {
+	url := request.URL
+	if d.urlFilter != nil && !d.urlFilter(request.Context(), url) {
 		return nil, fmt.Errorf("filter out")
 	}
 
@@ -72,17 +77,17 @@ func (d *HTTPDownloader) Download(ctx context.Context, address string) (io.ReadC
 		return nil, fmt.Errorf("unspported scheme: %s", url.Scheme)
 	}
 
-	req := common.Must(http.NewRequestWithContext(ctx, http.MethodGet, url.String(), nil))
-	if d.reqFilter != nil {
-		err = d.reqFilter(req)
-		if err != nil {
-			return nil, fmt.Errorf("RequestFilter failed: %w", err)
-		}
+	return d.download(request.Context(), request)
+}
+
+func (d *HTTPDownloader) download(ctx context.Context, request *http.Request) (*http.Response, error) {
+	if d.client.Timeout == 0 {
+		d.client.Timeout = constant.DefaultHTTPClientTimeout
 	}
 
-	resp, err := d.client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	return resp.Body, nil
+	//timeoutCtx, cancel := context.WithTimeout(ctx, d.client.Timeout)
+	//defer cancel()
+	//request = request.WithContext(timeoutCtx)
+
+	return d.client.Do(request)
 }

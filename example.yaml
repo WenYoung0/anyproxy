@@ -1,0 +1,5 @@
+listen: "::"
+port: 6646
+allowance:
+  - github.com
+  - raw.githubusercontent.com
