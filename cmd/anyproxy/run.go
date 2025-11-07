@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 
 	"github.com/wenyoung0/anyproxy/config"
@@ -43,8 +44,9 @@ func run(cmd *cobra.Command, args []string) {
 	}
 	rootCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	var wg = &sync.WaitGroup{}
 
-	err = proxy.Serve(rootCtx)
+	err = proxy.Serve(wg, rootCtx)
 	if err != nil {
 		logger.Error("Start server failed!", log.AttrError(err))
 		return
@@ -55,11 +57,12 @@ func run(cmd *cobra.Command, args []string) {
 
 	select {
 	case <-rootCtx.Done():
-		return
 	case sig := <-sigChannel:
-		cancel()
 		logger.Warn("Signal received", slog.String("signal", sig.String()))
+		cancel()
 	}
+
+	wg.Wait()
 }
 
 func readConfig() (config.Config, error) {

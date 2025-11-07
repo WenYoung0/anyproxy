@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	urlpkg "net/url"
 	"time"
 
+	"github.com/qtraffics/qtfra/log"
 	"github.com/wenyoung0/anyproxy/constant"
 )
 
@@ -26,21 +28,30 @@ var defaultHTTPClient = &http.Client{
 type HTTPDownloaderOption struct {
 	Client    *http.Client
 	URLFilter func(ctx context.Context, url *urlpkg.URL) bool
+
+	Attempt int
+	Logger  log.Logger
 }
 
 type HTTPDownloader struct {
+	logger log.Logger
+
 	client *http.Client
 
 	urlFilter func(ctx context.Context, url *urlpkg.URL) bool
+	attempt   int
 }
 
 func NewHTTP(option *HTTPDownloaderOption) *HTTPDownloader {
 	if option == nil {
 		option = &HTTPDownloaderOption{}
 	}
+	if option.Attempt <= 0 {
+		option.Attempt = 1
+	}
 
 	var client *http.Client
-	if option == nil || option.Client == nil {
+	if option.Client == nil {
 		client = defaultHTTPClient
 	} else {
 		client = option.Client
@@ -80,14 +91,20 @@ func (d *HTTPDownloader) DownloadHTTP(request *http.Request) (*http.Response, er
 	return d.download(request.Context(), request)
 }
 
-func (d *HTTPDownloader) download(ctx context.Context, request *http.Request) (*http.Response, error) {
+func (d *HTTPDownloader) download(ctx context.Context, request *http.Request) (response *http.Response, err error) {
 	if d.client.Timeout == 0 {
 		d.client.Timeout = constant.DefaultHTTPClientTimeout
 	}
 
-	//timeoutCtx, cancel := context.WithTimeout(ctx, d.client.Timeout)
-	//defer cancel()
-	//request = request.WithContext(timeoutCtx)
+	attempt := d.attempt
+	for attempt > 0 {
+		response, err = d.client.Do(request)
+		if err == nil {
+			return
+		}
+		d.logger.Info("http download failed", slog.Int("attempt", d.attempt-attempt))
+		attempt--
+	}
 
-	return d.client.Do(request)
+	return
 }

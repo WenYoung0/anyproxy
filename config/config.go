@@ -12,12 +12,14 @@ type Config struct {
 
 	Allowance []string `yaml:"allowance,omitempty"`
 
-	Attempt     uint16 `yaml:"attempt,omitempty"`
-	RateLimiter string `yaml:"rate-limit,omitempty"`
+	Attempt uint16 `yaml:"attempt,omitempty"`
 }
 
 func Default() Config {
-	return Config{}
+	return Config{
+		Port:    6466,
+		Attempt: 3,
+	}
 }
 
 func Parse(r io.Reader) (Config, error) {

@@ -23,7 +23,7 @@ $(BUILD_ARCH):
 	@cp example.yaml $(DIST_DIR)/$@/example.yaml
 
 build: clean
-	@echo "Building For " $(GOOS)-$(GOARCH)
+	@echo "Building for" $(GOOS)-$(GOARCH)
 	@mkdir -p $(DIST_DIR)
 	@rm -rf $(DIST_DIR)/$(BINARY)
 	@CGO_ENABLED=0 GOMIPS=softfloat go build \

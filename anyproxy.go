@@ -11,6 +11,7 @@ import (
 	urlpkg "net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/qtraffics/qtfra/enhancements/iolib"
@@ -25,8 +26,7 @@ import (
 var errExitSuccess = errors.New("exit success")
 
 type Proxy struct {
-	allowance map[string]bool
-
+	allowance      map[string]bool
 	httpDownloader *download.HTTPDownloader
 
 	config config.Config
@@ -67,28 +67,36 @@ func NewProxy(c config.Config) (*Proxy, error) {
 	return p, nil
 }
 
-func (p *Proxy) Serve(ctx context.Context) error {
+func (p *Proxy) Serve(wg *sync.WaitGroup, ctx context.Context) error {
 	cancelCtx, cancel := context.WithCancelCause(ctx)
 	defer cancel(errExitSuccess)
+
+	logger := log.GetDefaultLogger()
 
 	httpServer := &http.Server{}
 	httpServer.Handler = p.Handler(cancelCtx)
 	httpServer.Addr = net.JoinHostPort(p.config.Listen, strconv.FormatUint(uint64(p.config.Port), 10))
 	httpServer.BaseContext = func(_ net.Listener) context.Context { return cancelCtx }
 
-	go func() {
-		log.GetDefaultLogger().Info("Server started", slog.String("address", httpServer.Addr))
+	listener, err := net.Listen("tcp", httpServer.Addr)
+	if err != nil {
+		return err
+	}
+
+	wg.Go(func() {
+		logger.Info("Server started", slog.String("address", listener.Addr().String()))
 		err := httpServer.ListenAndServe()
 
 		if err != nil && !ex.IsMulti(err, net.ErrClosed) {
 			cancel(err)
 		}
 		cancel(errExitSuccess)
-	}()
+	})
 
-	var err error
-	select {
-	case <-cancelCtx.Done():
+	wg.Go(func() {
+		var err error
+		<-cancelCtx.Done()
+
 		timeoutCtx, timeoutCancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer timeoutCancel()
 		err = httpServer.Shutdown(timeoutCtx)
@@ -97,16 +105,22 @@ func (p *Proxy) Serve(ctx context.Context) error {
 			causeErr = nil
 		}
 		err = errors.Join(err, causeErr)
-	}
-	return err
+		if err != nil {
+			logger.Error("close server error", log.AttrError(err))
+		}
+	})
+
+	return nil
 }
 
 func (p *Proxy) Handler(ctx context.Context) http.Handler {
 	logger := log.GetDefaultLogger()
 	return http.HandlerFunc(func(resp http.ResponseWriter, req *http.Request) {
-		if req.Method != http.MethodGet {
+		if req.Method != http.MethodGet && req.Method != http.MethodHead {
 			// https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Allow
 			resp.Header().Add("Allow", http.MethodGet)
+			resp.Header().Add("Allow", http.MethodHead)
+
 			resp.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
@@ -126,7 +140,7 @@ func (p *Proxy) Handler(ctx context.Context) http.Handler {
 func (p *Proxy) startNewTask(ctx context.Context, resp http.ResponseWriter, req *http.Request, target string) {
 	logger := log.GetDefaultLogger()
 
-	targetReq, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	targetReq, err := http.NewRequestWithContext(ctx, req.Method, target, nil)
 	if err != nil {
 		http.Error(resp, err.Error(), http.StatusInternalServerError)
 		return
@@ -150,12 +164,14 @@ func (p *Proxy) startNewTask(ctx context.Context, resp http.ResponseWriter, req 
 			resp.Header().Add(k, v)
 		}
 	}
+
 	resp.WriteHeader(targetResponse.StatusCode)
 
 	// Copy the response body to the client
 	if _, err := iolib.Copy(targetResponse.Body, resp); err != nil {
 		logger.Error("Error copying response body", log.AttrError(err))
 	}
+
 	logger.Debug("Copy finished")
 }
 
