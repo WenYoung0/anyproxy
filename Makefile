@@ -32,6 +32,9 @@ build: clean
 	@cp example.yaml $(DIST_DIR)/example.yaml
 
 
+build_docker:
+	@docker build -t anyproxy:dev .
+
 fmt:
 	@GOOS=linux golangci-lint fmt
 

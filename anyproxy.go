@@ -76,6 +76,7 @@ func (p *Proxy) Serve(wg *sync.WaitGroup, ctx context.Context) error {
 
 	listener, err := net.Listen("tcp", httpServer.Addr)
 	if err != nil {
+		cancel(errExitSuccess)
 		return err
 	}
 

@@ -12,7 +12,9 @@ RUN rm -rf dist && \
 FROM scratch AS final
 WORKDIR /app
 
-COPY --from=builder /app/dist/anyproxy .
+COPY --from=builder /app/dist/anyproxy anyproxy
 COPY --from=builder /app/example.yaml config.yaml
+
+EXPOSE 6646
 
 CMD ["./anyproxy","run","-c","/app/config.yaml"]

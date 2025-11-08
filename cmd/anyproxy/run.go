@@ -53,7 +53,7 @@ func run(cmd *cobra.Command, args []string) {
 	}
 
 	sigChannel := make(chan os.Signal, 1)
-	signal.Notify(sigChannel, os.Interrupt, os.Kill, syscall.SIGHUP)
+	signal.Notify(sigChannel, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 
 	select {
 	case <-rootCtx.Done():

@@ -57,6 +57,7 @@ func NewHTTP(option *HTTPDownloaderOption) *HTTPDownloader {
 	return &HTTPDownloader{
 		client:  client,
 		attempt: option.Attempt,
+		logger:  log.GetDefaultLogger(),
 	}
 }
 
@@ -86,7 +87,7 @@ func (d *HTTPDownloader) download(ctx context.Context, request *http.Request) (r
 	for attempt > 0 {
 		response, err = d.client.Do(request)
 		if err == nil {
-			return
+			return response, nil
 		}
 		d.logger.Info("http download failed", slog.Int("attempt", d.attempt-attempt))
 		attempt--

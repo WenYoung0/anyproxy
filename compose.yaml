@@ -1,0 +1,12 @@
+services:
+  anyproxy:
+    container_name: anyproxy
+    network_mode: bridge
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "6646:6646/tcp"
+    volumes:
+      - ./example.yaml:/app/config.yaml
+    restart: always
