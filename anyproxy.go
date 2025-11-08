@@ -6,19 +6,19 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net"
 	"net/http"
-	urlpkg "net/url"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/qtraffics/qtfra/enhancements/iolib"
 	"github.com/wenyoung0/anyproxy/common/download"
 	"github.com/wenyoung0/anyproxy/config"
 	"github.com/wenyoung0/anyproxy/constant"
 
+	"github.com/qtraffics/qtfra/enhancements/iolib"
 	"github.com/qtraffics/qtfra/ex"
 	"github.com/qtraffics/qtfra/log"
 )
@@ -42,7 +42,6 @@ func NewProxy(c config.Config) (*Proxy, error) {
 		allowance[v] = true
 	}
 
-	// Custom client with timeouts
 	customClient := &http.Client{
 		Transport: &http.Transport{
 			DialContext: (&net.Dialer{
@@ -57,11 +56,9 @@ func NewProxy(c config.Config) (*Proxy, error) {
 	p := &Proxy{
 		httpDownloader: download.NewHTTP(&download.HTTPDownloaderOption{
 			Client: customClient,
-			URLFilter: func(ctx context.Context, url *urlpkg.URL) bool {
-				return allowance[url.Hostname()]
-			},
 		}),
-		config: c,
+		config:    c,
+		allowance: allowance,
 	}
 
 	return p, nil
@@ -69,7 +66,6 @@ func NewProxy(c config.Config) (*Proxy, error) {
 
 func (p *Proxy) Serve(wg *sync.WaitGroup, ctx context.Context) error {
 	cancelCtx, cancel := context.WithCancelCause(ctx)
-	defer cancel(errExitSuccess)
 
 	logger := log.GetDefaultLogger()
 
@@ -84,12 +80,18 @@ func (p *Proxy) Serve(wg *sync.WaitGroup, ctx context.Context) error {
 	}
 
 	wg.Go(func() {
+		defer listener.Close()
 		logger.Info("Server started", slog.String("address", listener.Addr().String()))
-		err := httpServer.ListenAndServe()
+		err := httpServer.Serve(listener)
+		if err != nil {
+			logger.Warn("Server closed with error", log.AttrError(err))
+			if !ex.IsMulti(err, net.ErrClosed) {
+				cancel(err)
+				return
+			}
 
-		if err != nil && !ex.IsMulti(err, net.ErrClosed) {
-			cancel(err)
 		}
+		logger.Warn("Server closed")
 		cancel(errExitSuccess)
 	})
 
@@ -116,14 +118,14 @@ func (p *Proxy) Serve(wg *sync.WaitGroup, ctx context.Context) error {
 func (p *Proxy) Handler(ctx context.Context) http.Handler {
 	logger := log.GetDefaultLogger()
 	return http.HandlerFunc(func(resp http.ResponseWriter, req *http.Request) {
-		if req.Method != http.MethodGet && req.Method != http.MethodHead {
-			// https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Allow
-			resp.Header().Add("Allow", http.MethodGet)
-			resp.Header().Add("Allow", http.MethodHead)
-
-			resp.WriteHeader(http.StatusMethodNotAllowed)
-			return
-		}
+		//if req.Method != http.MethodGet && req.Method != http.MethodHead {
+		//	// https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Allow
+		//	resp.Header().Add("Allow", http.MethodGet)
+		//	resp.Header().Add("Allow", http.MethodHead)
+		//
+		//	resp.WriteHeader(http.StatusMethodNotAllowed)
+		//	return
+		//}
 
 		target := cmp.Or(req.URL.RawPath, req.URL.Path)
 		target = strings.TrimLeft(target, "/")
@@ -132,68 +134,59 @@ func (p *Proxy) Handler(ctx context.Context) http.Handler {
 			return
 		}
 
-		logger.Info("Start new task for", slog.String("target", target))
+		if !strings.HasPrefix(target, "http://") && !strings.HasPrefix(target, "https://") {
+			target = "https://" + target
+		}
+		if len(req.URL.RawQuery) != 0 {
+			target += "?" + req.URL.RawQuery
+		}
+
+		logger.Info("Start new task for",
+			slog.String("target", target),
+			slog.String("method", req.Method))
 		p.startNewTask(req.Context(), resp, req, target)
 	})
 }
 
-func (p *Proxy) startNewTask(ctx context.Context, resp http.ResponseWriter, req *http.Request, target string) {
+func (p *Proxy) startNewTask(ctx context.Context, clientResponse http.ResponseWriter, clientRequest *http.Request, target string) {
 	logger := log.GetDefaultLogger()
 
-	targetReq, err := http.NewRequestWithContext(ctx, req.Method, target, nil)
+	request, err := http.NewRequestWithContext(ctx, clientRequest.Method, target, clientRequest.Body)
 	if err != nil {
-		http.Error(resp, err.Error(), http.StatusInternalServerError)
+		http.Error(clientResponse, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	p.copyHeader(req.Header, targetReq.Header)
+	if !p.allowance[request.URL.Hostname()] {
+		http.Error(clientResponse, "Access denied.", http.StatusForbidden)
+		return
+	}
+
+	maps.Copy(request.Header, clientRequest.Header)
 
 	logger.Debug("Start download", slog.String("target", target))
-	targetResponse, err := p.httpDownloader.DownloadHTTP(targetReq)
+	response, err := p.httpDownloader.DownloadHTTP(request)
 	if err != nil {
 		logger.Info("Download failed!", slog.String("target", target), log.AttrError(err))
-		http.Error(resp, err.Error(), http.StatusInternalServerError)
+		http.Error(clientResponse, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	defer targetResponse.Body.Close()
+	defer response.Body.Close()
 
 	// Copy headers
-	for k, vv := range targetResponse.Header {
-		for _, v := range vv {
-			resp.Header().Add(k, v)
+	for k, v := range response.Header {
+		for _, vv := range v {
+			clientResponse.Header().Add(k, vv)
 		}
 	}
 
-	resp.WriteHeader(targetResponse.StatusCode)
+	clientResponse.WriteHeader(response.StatusCode)
 
 	// Copy the response body to the client
-	if _, err := iolib.Copy(targetResponse.Body, resp); err != nil {
+	if _, err := iolib.Copy(response.Body, clientResponse); err != nil {
 		logger.Error("Error copying response body", log.AttrError(err))
 	}
 
 	logger.Debug("Copy finished")
-}
-
-func (p *Proxy) copyHeader(source, destination http.Header) {
-	mapping := map[string]string{
-		"User-Agent":        source.Get("User-Agent"),
-		"Cookie":            source.Get("Cookie"),
-		"Accept":            source.Get("Accept"),
-		"Accept-Encoding":   source.Get("Accept-Encoding"),
-		"Accept-Language":   source.Get("Accept-Language"),
-		"Referer":           source.Get("Referer"), // optional
-		"Authorization":     source.Get("Authorization"),
-		"If-Modified-Since": source.Get("If-Modified-Since"),
-		"If-None-Match":     source.Get("If-None-Match"),
-		"Range":             source.Get("Range"),
-		"Origin":            source.Get("Origin"),
-	}
-
-	for header, headerValue := range mapping {
-		if len(headerValue) == 0 {
-			continue
-		}
-		destination.Set(header, headerValue)
-	}
 }

@@ -44,7 +44,7 @@ func run(cmd *cobra.Command, args []string) {
 	}
 	rootCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	var wg = &sync.WaitGroup{}
+	wg := &sync.WaitGroup{}
 
 	err = proxy.Serve(wg, rootCtx)
 	if err != nil {

@@ -2,15 +2,14 @@ package download
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
-	urlpkg "net/url"
 	"time"
 
-	"github.com/qtraffics/qtfra/log"
 	"github.com/wenyoung0/anyproxy/constant"
+
+	"github.com/qtraffics/qtfra/log"
 )
 
 var _ Downloader = (*HTTPDownloader)(nil)
@@ -26,8 +25,7 @@ var defaultHTTPClient = &http.Client{
 }
 
 type HTTPDownloaderOption struct {
-	Client    *http.Client
-	URLFilter func(ctx context.Context, url *urlpkg.URL) bool
+	Client *http.Client
 
 	Attempt int
 	Logger  log.Logger
@@ -38,8 +36,7 @@ type HTTPDownloader struct {
 
 	client *http.Client
 
-	urlFilter func(ctx context.Context, url *urlpkg.URL) bool
-	attempt   int
+	attempt int
 }
 
 func NewHTTP(option *HTTPDownloaderOption) *HTTPDownloader {
@@ -58,8 +55,8 @@ func NewHTTP(option *HTTPDownloaderOption) *HTTPDownloader {
 	}
 
 	return &HTTPDownloader{
-		client:    client,
-		urlFilter: option.URLFilter,
+		client:  client,
+		attempt: option.Attempt,
 	}
 }
 
@@ -77,17 +74,6 @@ func (d *HTTPDownloader) Download(ctx context.Context, address string) (io.ReadC
 }
 
 func (d *HTTPDownloader) DownloadHTTP(request *http.Request) (*http.Response, error) {
-	url := request.URL
-	if d.urlFilter != nil && !d.urlFilter(request.Context(), url) {
-		return nil, fmt.Errorf("filter out")
-	}
-
-	if url.Scheme == "" {
-		url.Scheme = SchemeHTTPS
-	} else if url.Scheme != SchemeHTTP && url.Scheme != SchemeHTTPS {
-		return nil, fmt.Errorf("unspported scheme: %s", url.Scheme)
-	}
-
 	return d.download(request.Context(), request)
 }
 

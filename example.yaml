@@ -1,5 +1,9 @@
 listen: "::"
 port: 6646
+attempt: 4
 allowance:
   - github.com
   - raw.githubusercontent.com
+  - git.io
+  - github.io
+  - gist.github.com
