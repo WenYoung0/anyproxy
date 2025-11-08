@@ -16,6 +16,8 @@ COPY --from=builder /app/dist/anyproxy anyproxy
 COPY --from=builder /app/example.yaml config.yaml
 COPY --from=builder /etc/ssl /etc/ssl
 
+ENV LOG_LEVEL=info
+
 EXPOSE 6646
 
 CMD ["./anyproxy","run","-c","/app/config.yaml"]
