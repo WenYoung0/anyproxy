@@ -90,8 +90,8 @@ func (p *Proxy) Serve(wg *sync.WaitGroup, ctx context.Context) error {
 				cancel(err)
 				return
 			}
-
 		}
+
 		logger.Warn("Server closed")
 		cancel(errExitSuccess)
 	})
@@ -107,6 +107,7 @@ func (p *Proxy) Serve(wg *sync.WaitGroup, ctx context.Context) error {
 		if errors.Is(causeErr, errExitSuccess) {
 			causeErr = nil
 		}
+
 		err = errors.Join(err, causeErr)
 		if err != nil {
 			logger.Error("close server error", log.AttrError(err))
@@ -164,6 +165,8 @@ func (p *Proxy) startNewTask(ctx context.Context, clientResponse http.ResponseWr
 	}
 
 	maps.Copy(request.Header, clientRequest.Header)
+	// Remove the Host header (must)
+	request.Header.Del("Host")
 
 	logger.Debug("Start download", slog.String("target", target))
 	response, err := p.httpDownloader.DownloadHTTP(request)

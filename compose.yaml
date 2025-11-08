@@ -9,4 +9,6 @@ services:
       - "6646:6646/tcp"
     volumes:
       - ./example.yaml:/app/config.yaml
+    environment:
+      - LOG_LEVEL=WARN
     restart: always

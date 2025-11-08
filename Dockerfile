@@ -14,6 +14,7 @@ WORKDIR /app
 
 COPY --from=builder /app/dist/anyproxy anyproxy
 COPY --from=builder /app/example.yaml config.yaml
+COPY --from=builder /etc/ssl /etc/ssl
 
 EXPOSE 6646
 
